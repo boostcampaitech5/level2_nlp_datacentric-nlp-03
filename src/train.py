@@ -88,6 +88,17 @@ def train_(model,WANDB_NAME, SAVE_STEPS):
 
     trainer.train()
 
+def get_probs(model: AutoModelForSequenceClassification, dataset: BERTDataset):
+    probs_list = []
+    dataloader = DataLoader(dataset, batch_size=32)
+    with torch.no_grad():
+        for input in tqdm(dataloader, total=len(dataloader), desc="calc probs"):
+            logits = model(input_ids=input["input_ids"].to("cuda:0"), attention_mask=input["attention_mask"].to("cuda:0")).logits
+            probs = torch.nn.Softmax(dim=1)(logits).tolist()
+            probs_list.extend(probs)
+    
+    return probs_list
+
 def evaluate_(model, tokenizer, dataset_val):
     ## Evaluate Model
     dataset_test = pd.read_csv(os.path.join(DATA_DIR, 'test.csv'))
@@ -104,14 +115,27 @@ def evaluate_(model, tokenizer, dataset_val):
     dataset_test['target'] = preds
     dataset_test.to_csv(os.path.join(OUTPUT_DIR, 'submission.csv'), index=False)
 
-    ## val_data
-    preds = []
-    for i, sample in tqdm(dataset_val.iterrows(), total=len(dataset_val), desc='VAL'):
-        inputs = tokenizer(sample['text'], return_tensors='pt').to(DEVICE)
-        with torch.no_grad():
-            logits = model(**inputs).logits
-            pred = torch.argmax(torch.nn.Softmax(dim=1)(logits), dim=1).cpu().numpy()
-            preds.extend(pred)
+    ## save probs
+    train_probs = get_probs(model, data_train)
+    valid_probs = get_probs(model, data_valid)
+
+    train_prob_df = pd.DataFrame()
+    train_prob_df["ID"] = dataset_train["ID"]
+    train_prob_df["target"] = dataset_train["target"]
+    train_prob_df["probs"] = train_probs
+
+    valid_prob_df = pd.DataFrame()
+    valid_prob_df["ID"] = dataset_valid["ID"]
+    valid_prob_df["target"] = dataset_valid["target"]
+    valid_prob_df["probs"] = valid_probs
+
+    total_prob_df = pd.concat([train_prob_df, valid_prob_df], axis=0, ignore_index=True)
+    total_prob_df.to_csv(os.path.join(OUTPUT_DIR, "probs.csv"), index=False)
+
+    ## save val results
+    valid_probs = np.array(valid_probs)
+    preds = np.argmax(valid_probs, axis=1)
+
     dataset_val['preds'] = preds
     dataset_val.to_csv(os.path.join(OUTPUT_DIR, 'val_result.csv'), index=False)
 
@@ -148,6 +172,7 @@ if __name__=='__main__':
     BASE_DIR = os.getcwd()
     DATA_DIR = os.path.join(BASE_DIR, 'data')
     OUTPUT_DIR = os.path.join(BASE_DIR, 'output', WANDB_NAME)
+    os.mkdir(OUTPUT_DIR)
 
     ## Load Tokenizer and Model
     model_name = 'monologg/kobert'
