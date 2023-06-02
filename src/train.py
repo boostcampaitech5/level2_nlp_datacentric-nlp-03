@@ -22,7 +22,10 @@ from tokenization_kobert import KoBertTokenizer
 class BERTDataset(Dataset):
     def __init__(self, data, tokenizer, MAX_LENGTH):
         input_texts = data['text']
-        targets = data['target']
+        if 'target' in data.columns:
+            targets = data['target']
+        else:
+            targets = [-1] * len(data)
         self.inputs = []; self.labels = []
         for text, label in zip(input_texts, targets):
             tokenized_input = tokenizer(text, padding='max_length', truncation=True, return_tensors='pt', max_length=MAX_LENGTH)
